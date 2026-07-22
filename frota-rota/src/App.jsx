@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Building2, Car, UserRound, FileText, Fuel, BarChart3, Users, LogOut,
   Plus, Pencil, Trash2, Menu, X, TriangleAlert, Check, Upload, Search,
-  ChevronRight, ChevronDown, Paperclip, CircleCheck, CircleAlert, Shield
+  ChevronRight, ChevronDown, Paperclip, CircleCheck, CircleAlert, Shield, Download,
+  Receipt, Ban, ShieldCheck, ShieldAlert, Star, MessageSquareWarning
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage.js";
 
@@ -44,12 +45,35 @@ const fileToDataUrl = (file) =>
     r.readAsDataURL(file);
   });
 
+function exportToCSV(filename, rows, columns) {
+  const esc = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = columns.map((c) => esc(c.label)).join(";");
+  const body = rows.map((r) => columns.map((c) => esc(c.get(r))).join(";")).join("\n");
+  const csv = "\uFEFF" + header + "\n" + body;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".csv") ? filename : filename + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 const ROLE_LABEL = { leitura: "Leitura", lancamento: "Lançamento", admin: "Administrador" };
 const ROLE_DESC = {
   leitura: "Pode consultar todos os dados, sem editar.",
   lancamento: "Pode consultar e lançar/editar dados.",
   admin: "Acesso total, incluindo gestão de utilizadores.",
 };
+
+const RATING_LABEL = { bom: "Bom comportamento", atencao: "Em atenção", bloqueado: "Bloqueado" };
+const RATING_TONE = { bom: "success", atencao: "warning", bloqueado: "danger" };
+const RATING_ICON = { bom: ShieldCheck, atencao: ShieldAlert, bloqueado: Ban };
 
 /* ================= APP ================= */
 export default function App() {
@@ -60,19 +84,21 @@ export default function App() {
   const [drivers, setDrivers] = useState([]);
   const [pos, setPos] = useState([]);
   const [fuel, setFuel] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const [u, c, v, d, p, f] = await Promise.all([
+      const [u, c, v, d, p, f, inv] = await Promise.all([
         loadKey("users", []),
         loadKey("companies", []),
         loadKey("vehicles", []),
         loadKey("drivers", []),
         loadKey("pos", []),
         loadKey("fuel", []),
+        loadKey("invoices", []),
       ]);
       let finalUsers = u;
       if (!u || u.length === 0) {
@@ -85,6 +111,7 @@ export default function App() {
       setDrivers(d);
       setPos(p);
       setFuel(f);
+      setInvoices(inv);
       setReady(true);
     })();
   }, []);
@@ -119,11 +146,12 @@ export default function App() {
     { id: "drivers", label: "Motoristas", icon: UserRound },
     { id: "pos", label: "PO's", icon: FileText },
     { id: "fuel", label: "Combustível", icon: Fuel },
+    { id: "invoices", label: "Faturas", icon: Receipt },
     { id: "reports", label: "Relatórios", icon: BarChart3 },
     ...(can.admin ? [{ id: "users", label: "Utilizadores", icon: Users }] : []),
   ];
 
-  const data = { users, companies, vehicles, drivers, pos, fuel };
+  const data = { users, companies, vehicles, drivers, pos, fuel, invoices };
   const setters = {
     users: (v) => persist("users", setUsers, v),
     companies: (v) => persist("companies", setCompanies, v),
@@ -131,6 +159,7 @@ export default function App() {
     drivers: (v) => persist("drivers", setDrivers, v),
     pos: (v) => persist("pos", setPos, v),
     fuel: (v) => persist("fuel", setFuel, v),
+    invoices: (v) => persist("invoices", setInvoices, v),
   };
 
   return (
@@ -235,6 +264,7 @@ export default function App() {
             {view === "drivers" && <DriversView data={data} setters={setters} can={can} />}
             {view === "pos" && <POsView data={data} setters={setters} can={can} />}
             {view === "fuel" && <FuelView data={data} setters={setters} can={can} />}
+            {view === "invoices" && <InvoicesView data={data} setters={setters} can={can} />}
             {view === "reports" && <ReportsView data={data} />}
             {view === "users" && can.admin && <UsersView data={data} setters={setters} currentUser={currentUser} />}
           </main>
@@ -476,7 +506,9 @@ function DocUploader({ docs, setDocs }) {
               className="text-xs px-2 py-1 rounded-md flex items-center gap-1"
               style={{ background: T.surfaceSoft }}
             >
-              <Paperclip size={11} /> {d.name}
+              <a href={d.data} download={d.name} className="flex items-center gap-1" style={{ color: T.ink }}>
+                <Paperclip size={11} /> {d.name}
+              </a>
               <button onClick={() => setDocs(docs.filter((x) => x.id !== d.id))} style={{ color: T.danger }}>
                 <X size={11} />
               </button>
@@ -499,6 +531,106 @@ function SearchBox({ value, onChange, placeholder }) {
         className="pl-8 pr-3 py-2 rounded-lg text-sm outline-none w-full sm:w-64"
         style={inputStyle}
       />
+    </div>
+  );
+}
+
+function DocList({ docs }) {
+  if (!docs || docs.length === 0) return <span className="text-xs" style={{ color: T.inkSoft }}>Sem anexos</span>;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {docs.map((d) => (
+        <a
+          key={d.id}
+          href={d.data}
+          download={d.name}
+          className="text-xs px-2 py-1 rounded-md flex items-center gap-1"
+          style={{ background: T.surfaceSoft, color: T.ink }}
+        >
+          <Download size={11} /> {d.name}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function RatingBadge({ rating }) {
+  const r = rating || "bom";
+  const Icon = RATING_ICON[r];
+  return (
+    <Badge tone={RATING_TONE[r]}>
+      <span className="flex items-center gap-1"><Icon size={11} /> {RATING_LABEL[r]}</span>
+    </Badge>
+  );
+}
+
+/* Evaluation panel: shows rating, lets admin/lançamento change it and log incidents.
+   Used inside Company and Driver edit modals. */
+function EvaluationPanel({ entity, onChange }) {
+  const [note, setNote] = useState("");
+  const rating = entity.rating || "bom";
+  const incidents = entity.incidents || [];
+
+  const setRating = (r) => onChange({ ...entity, rating: r });
+
+  const addIncident = () => {
+    if (!note.trim()) return;
+    const incident = { id: uid(), date: todayISO(), note: note.trim(), severity: rating === "bloqueado" ? "grave" : "atencao" };
+    onChange({ ...entity, incidents: [incident, ...incidents] });
+    setNote("");
+  };
+
+  return (
+    <div className="rounded-lg p-3" style={{ background: T.surfaceSoft }}>
+      <div className="text-xs font-semibold mb-2" style={{ color: T.inkSoft }}>AVALIAÇÃO DE COMPORTAMENTO</div>
+      <div className="flex gap-2 mb-3">
+        {["bom", "atencao", "bloqueado"].map((r) => {
+          const Icon = RATING_ICON[r];
+          const active = rating === r;
+          return (
+            <button
+              key={r}
+              onClick={() => setRating(r)}
+              className="flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-xs"
+              style={{
+                background: active ? RATING_TONE[r] === "success" ? T.successSoft : RATING_TONE[r] === "warning" ? T.warningSoft : T.dangerSoft : T.surface,
+                color: active ? (RATING_TONE[r] === "success" ? T.success : RATING_TONE[r] === "warning" ? T.warning : T.danger) : T.inkSoft,
+                fontWeight: active ? 600 : 400,
+                border: `1px solid ${active ? "transparent" : T.line}`,
+              }}
+            >
+              <Icon size={15} />
+              {RATING_LABEL[r]}
+            </button>
+          );
+        })}
+      </div>
+      {rating === "bloqueado" && (
+        <div className="text-xs mb-3 flex items-center gap-1" style={{ color: T.danger }}>
+          <TriangleAlert size={12} /> Bloqueado: não pode ser selecionado em novas alocações de PO.
+        </div>
+      )}
+      <div className="flex gap-2 mb-3">
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Registar ocorrência (ex: atraso, dano, comportamento inadequado)…"
+          className={inputCls}
+          style={{ ...inputStyle, background: "#fff" }}
+        />
+        <Btn size="sm" onClick={addIncident}><Plus size={12} /></Btn>
+      </div>
+      {incidents.length > 0 && (
+        <div className="flex flex-col gap-1.5 max-h-32 overflow-y-auto scrollbar-thin">
+          {incidents.map((i) => (
+            <div key={i.id} className="text-xs flex items-start gap-2 py-1" style={{ borderTop: `1px solid ${T.line}` }}>
+              <MessageSquareWarning size={12} style={{ color: T.warning, marginTop: 2, flexShrink: 0 }} />
+              <span style={{ color: T.inkSoft }}>{fmtDate(i.date)} — </span>
+              <span>{i.note}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -620,7 +752,7 @@ function CompaniesView({ data, setters, can }) {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: T.surfaceSoft }}>
-                {["Empresa", "NUIT", "Contacto", "Estado", ""].map((h) => (
+                {["Empresa", "NUIT", "Contacto", "Estado", "Avaliação", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-xs" style={{ color: T.inkSoft }}>{h}</th>
                 ))}
               </tr>
@@ -632,6 +764,7 @@ function CompaniesView({ data, setters, can }) {
                   <td className="px-4 py-3 mono text-xs">{c.nuit || "—"}</td>
                   <td className="px-4 py-3">{c.contact || "—"}</td>
                   <td className="px-4 py-3"><Badge tone={c.status === "inativo" ? "danger" : "success"}>{c.status || "ativo"}</Badge></td>
+                  <td className="px-4 py-3"><RatingBadge rating={c.rating} /></td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     {can.edit && (
                       <>
@@ -665,9 +798,18 @@ function CompaniesView({ data, setters, can }) {
 }
 
 function CompanyModal({ item, onSave, onClose }) {
-  const [f, setF] = useState({ id: item.id || uid(), name: item.name || "", nuit: item.nuit || "", contact: item.contact || "", address: item.address || "", status: item.status || "ativo" });
+  const [f, setF] = useState({
+    id: item.id || uid(),
+    name: item.name || "",
+    nuit: item.nuit || "",
+    contact: item.contact || "",
+    address: item.address || "",
+    status: item.status || "ativo",
+    rating: item.rating || "bom",
+    incidents: item.incidents || [],
+  });
   return (
-    <Modal title={item.id ? "Editar empresa" : "Nova empresa"} onClose={onClose}>
+    <Modal title={item.id ? "Editar empresa" : "Nova empresa"} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
         <Field label="Nome da empresa"><input className={inputCls} style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="NUIT"><input className={inputCls} style={inputStyle} value={f.nuit} onChange={(e) => setF({ ...f, nuit: e.target.value })} /></Field>
@@ -679,6 +821,7 @@ function CompanyModal({ item, onSave, onClose }) {
             <option value="inativo">Inativo</option>
           </select>
         </Field>
+        {item.id && <EvaluationPanel entity={f} onChange={setF} />}
       </div>
       <div className="flex justify-end gap-2 mt-5">
         <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
@@ -834,7 +977,7 @@ function DriversView({ data, setters, can }) {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: T.surfaceSoft }}>
-                {["Nome", "Carta Nº", "Validade", "Empresa", ""].map((h) => (
+                {["Nome", "Carta Nº", "Validade", "Empresa", "Avaliação", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-xs" style={{ color: T.inkSoft }}>{h}</th>
                 ))}
               </tr>
@@ -851,6 +994,7 @@ function DriversView({ data, setters, can }) {
                       {dd !== null && dd <= 30 && <Badge tone={dd < 0 ? "danger" : "warning"}>{dd < 0 ? "expirada" : `${dd}d`}</Badge>}
                     </td>
                     <td className="px-4 py-3">{companyName(d.companyId)}</td>
+                    <td className="px-4 py-3"><RatingBadge rating={d.rating} /></td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {can.edit && (
                         <>
@@ -891,6 +1035,8 @@ function DriverModal({ item, companies, onSave, onClose }) {
     companyId: item.companyId || "",
     phone: item.phone || "",
     docs: item.docs || [],
+    rating: item.rating || "bom",
+    incidents: item.incidents || [],
   });
   return (
     <Modal title={item.id ? "Editar motorista" : "Novo motorista"} onClose={onClose} wide>
@@ -909,6 +1055,7 @@ function DriverModal({ item, companies, onSave, onClose }) {
       <div className="mt-3">
         <Field label="Documentação"><DocUploader docs={f.docs} setDocs={(d) => setF({ ...f, docs: d })} /></Field>
       </div>
+      {item.id && <div className="mt-3"><EvaluationPanel entity={f} onChange={setF} /></div>}
       <div className="flex justify-end gap-2 mt-5">
         <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
         <Btn onClick={() => f.name.trim() && onSave(f)}>Guardar</Btn>
@@ -1087,13 +1234,13 @@ function AllocationsBlock({ po, data, setters, can, onUpdate }) {
         </div>
       )}
       {modal && (
-        <AllocationModal item={modal} vehicles={data.vehicles} drivers={data.drivers} onSave={saveAlloc} onClose={() => setModal(null)} />
+        <AllocationModal item={modal} vehicles={data.vehicles} drivers={data.drivers} companies={data.companies} onSave={saveAlloc} onClose={() => setModal(null)} />
       )}
     </div>
   );
 }
 
-function AllocationModal({ item, vehicles, drivers, onSave, onClose }) {
+function AllocationModal({ item, vehicles, drivers, companies, onSave, onClose }) {
   const [f, setF] = useState({
     id: item.id || uid(),
     vehicleId: item.vehicleId || "",
@@ -1103,20 +1250,35 @@ function AllocationModal({ item, vehicles, drivers, onSave, onClose }) {
     fuelIncluded: item.fuelIncluded ?? true,
     startDate: item.startDate || todayISO(),
   });
+  const companyOf = (v) => companies.find((c) => c.id === v.companyId);
+  const availableVehicles = vehicles.filter((v) => companyOf(v)?.rating !== "bloqueado");
+  const blockedVehiclesCount = vehicles.length - availableVehicles.length;
+  const availableDrivers = drivers.filter((d) => d.rating !== "bloqueado");
+  const blockedDriversCount = drivers.length - availableDrivers.length;
   return (
     <Modal title={item.id ? "Editar alocação" : "Alocar viatura"} onClose={onClose}>
       <div className="flex flex-col gap-3">
         <Field label="Viatura">
           <select className={inputCls} style={inputStyle} value={f.vehicleId} onChange={(e) => setF({ ...f, vehicleId: e.target.value })}>
             <option value="">Selecionar…</option>
-            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plate} — {v.brand} {v.model}</option>)}
+            {availableVehicles.map((v) => <option key={v.id} value={v.id}>{v.plate} — {v.brand} {v.model}</option>)}
           </select>
+          {blockedVehiclesCount > 0 && (
+            <div className="text-xs mt-1 flex items-center gap-1" style={{ color: T.inkSoft }}>
+              <Ban size={11} /> {blockedVehiclesCount} viatura(s) ocultas — empresa bloqueada
+            </div>
+          )}
         </Field>
         <Field label="Motorista">
           <select className={inputCls} style={inputStyle} value={f.driverId} onChange={(e) => setF({ ...f, driverId: e.target.value })}>
             <option value="">— nenhum —</option>
-            {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {availableDrivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
+          {blockedDriversCount > 0 && (
+            <div className="text-xs mt-1 flex items-center gap-1" style={{ color: T.inkSoft }}>
+              <Ban size={11} /> {blockedDriversCount} motorista(s) ocultos — bloqueado(s)
+            </div>
+          )}
         </Field>
         <Field label="Data de início"><input type="date" className={inputCls} style={inputStyle} value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} /></Field>
         <Field label="Dias alocados"><input type="number" className={inputCls} style={inputStyle} value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} /></Field>
@@ -1298,6 +1460,147 @@ function FuelModal({ item, vehicles, pendingAllocs, onSave, onClose }) {
   );
 }
 
+/* ================= INVOICES (FATURAS) ================= */
+function InvoicesView({ data, setters, can }) {
+  const [q, setQ] = useState("");
+  const [modal, setModal] = useState(null);
+  const [del, setDel] = useState(null);
+  const companyName = (id) => data.companies.find((c) => c.id === id)?.name || "—";
+  const poNumber = (id) => data.pos.find((p) => p.id === id)?.number || "—";
+  const vehiclePlate = (id) => data.vehicles.find((v) => v.id === id)?.plate || "—";
+
+  const list = [...data.invoices]
+    .filter((i) => (i.number + " " + companyName(i.companyId)).toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => (b.date > a.date ? 1 : -1));
+
+  const totalListed = list.reduce((s, i) => s + (Number(i.value) || 0), 0);
+
+  const save = (item) => {
+    const exists = data.invoices.some((i) => i.id === item.id);
+    setters.invoices(exists ? data.invoices.map((i) => (i.id === item.id ? item : i)) : [...data.invoices, item]);
+    setModal(null);
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Faturas"
+        subtitle="Registo de faturas, anexos e custos"
+        action={
+          <div className="flex gap-2 items-center">
+            <SearchBox value={q} onChange={setQ} placeholder="Nº fatura ou empresa…" />
+            {can.edit && <Btn onClick={() => setModal({})}><Plus size={15} /> Nova fatura</Btn>}
+          </div>
+        }
+      />
+      <div className="mb-4">
+        <StatCard label="Total desta lista" value={`${totalListed.toLocaleString("pt-PT")} MT`} icon={Receipt} tone="accent" />
+      </div>
+      <Card className="overflow-x-auto scrollbar-thin">
+        {list.length === 0 ? (
+          <Empty text="Nenhuma fatura registada." />
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: T.surfaceSoft }}>
+                {["Nº Fatura", "Data", "Empresa", "PO", "Viatura", "Valor", "Anexos", ""].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 font-medium text-xs" style={{ color: T.inkSoft }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((i) => (
+                <tr key={i.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td className="px-4 py-3 mono">{i.number}</td>
+                  <td className="px-4 py-3">{fmtDate(i.date)}</td>
+                  <td className="px-4 py-3">{companyName(i.companyId)}</td>
+                  <td className="px-4 py-3 mono text-xs">{i.poId ? poNumber(i.poId) : "—"}</td>
+                  <td className="px-4 py-3 mono text-xs">{i.vehicleId ? vehiclePlate(i.vehicleId) : "—"}</td>
+                  <td className="px-4 py-3 font-medium">{Number(i.value || 0).toLocaleString("pt-PT")} MT</td>
+                  <td className="px-4 py-3"><DocList docs={i.docs} /></td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {can.edit && (
+                      <>
+                        <button onClick={() => setModal(i)} className="p-1.5" style={{ color: T.inkSoft }}><Pencil size={14} /></button>
+                        <button onClick={() => setDel(i)} className="p-1.5" style={{ color: T.danger }}><Trash2 size={14} /></button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      {modal && (
+        <InvoiceModal item={modal} companies={data.companies} pos={data.pos} vehicles={data.vehicles} onSave={save} onClose={() => setModal(null)} />
+      )}
+      {del && (
+        <ConfirmDelete
+          label={`fatura ${del.number}`}
+          onClose={() => setDel(null)}
+          onConfirm={() => {
+            setters.invoices(data.invoices.filter((i) => i.id !== del.id));
+            setDel(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function InvoiceModal({ item, companies, pos, vehicles, onSave, onClose }) {
+  const [f, setF] = useState({
+    id: item.id || uid(),
+    number: item.number || "",
+    date: item.date || todayISO(),
+    companyId: item.companyId || "",
+    poId: item.poId || "",
+    vehicleId: item.vehicleId || "",
+    value: item.value || "",
+    description: item.description || "",
+    docs: item.docs || [],
+  });
+  return (
+    <Modal title={item.id ? "Editar fatura" : "Nova fatura"} onClose={onClose} wide>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Field label="Número da fatura"><input className={inputCls} style={inputStyle} value={f.number} onChange={(e) => setF({ ...f, number: e.target.value })} /></Field>
+        <Field label="Data"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+        <Field label="Empresa">
+          <select className={inputCls} style={inputStyle} value={f.companyId} onChange={(e) => setF({ ...f, companyId: e.target.value })}>
+            <option value="">Selecionar…</option>
+            {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Valor (MT)"><input type="number" className={inputCls} style={inputStyle} value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} /></Field>
+        <Field label="PO relacionada (opcional)">
+          <select className={inputCls} style={inputStyle} value={f.poId} onChange={(e) => setF({ ...f, poId: e.target.value })}>
+            <option value="">— nenhuma —</option>
+            {pos.map((p) => <option key={p.id} value={p.id}>PO {p.number}</option>)}
+          </select>
+        </Field>
+        <Field label="Viatura relacionada (opcional)">
+          <select className={inputCls} style={inputStyle} value={f.vehicleId} onChange={(e) => setF({ ...f, vehicleId: e.target.value })}>
+            <option value="">— nenhuma —</option>
+            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plate} — {v.brand} {v.model}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="mt-3">
+        <Field label="Descrição"><input className={inputCls} style={inputStyle} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="ex: aluguel mensal, manutenção, combustível…" /></Field>
+      </div>
+      <div className="mt-3">
+        <Field label="Anexar fatura / comprovativo"><DocUploader docs={f.docs} setDocs={(d) => setF({ ...f, docs: d })} /></Field>
+      </div>
+      <div className="flex justify-end gap-2 mt-5">
+        <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={() => f.number.trim() && f.companyId && onSave(f)}>Guardar</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 /* ================= REPORTS ================= */
 function ReportsView({ data }) {
   const [tab, setTab] = useState("po");
@@ -1306,6 +1609,8 @@ function ReportsView({ data }) {
     { id: "sem-combustivel", label: "Sem combustível" },
     { id: "reposicao", label: "Reposições" },
     { id: "abastecidas", label: "Viaturas abastecidas" },
+    { id: "custos", label: "Custos" },
+    { id: "avaliacao", label: "Avaliação de empresas/motoristas" },
   ];
   return (
     <div>
@@ -1326,6 +1631,8 @@ function ReportsView({ data }) {
       {tab === "sem-combustivel" && <ReportSemCombustivel data={data} />}
       {tab === "reposicao" && <ReportReposicao data={data} />}
       {tab === "abastecidas" && <ReportAbastecidas data={data} />}
+      {tab === "custos" && <ReportCustos data={data} />}
+      {tab === "avaliacao" && <ReportAvaliacao data={data} />}
     </div>
   );
 }
@@ -1386,7 +1693,24 @@ function ReportPO({ data }) {
           </Card>
 
           <Card className="p-4 overflow-x-auto scrollbar-thin">
-            <div className="font-semibold text-sm mb-3">Destinos e detalhe por viatura</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold text-sm">Destinos e detalhe por viatura</div>
+              <Btn
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  exportToCSV(`PO_${po.number}_detalhe`, po.allocations || [], [
+                    { label: "Viatura", get: (a) => data.vehicles.find((v) => v.id === a.vehicleId)?.plate || "" },
+                    { label: "Empresa", get: (a) => companyName(a.vehicleId) },
+                    { label: "Dias", get: (a) => a.days },
+                    { label: "Destino", get: (a) => a.destination },
+                    { label: "Combustível", get: (a) => (a.fuelIncluded ? "com" : "sem") },
+                  ])
+                }
+              >
+                <Download size={12} /> Exportar CSV
+              </Btn>
+            </div>
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: T.surfaceSoft }}>
@@ -1437,6 +1761,26 @@ function ReportSemCombustivel({ data }) {
         <StatCard label="Já repostas" value={done.length} icon={CircleCheck} tone="primary" />
       </div>
       <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold text-sm">Viaturas sem combustível</div>
+          {rows.length > 0 && (
+            <Btn
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                exportToCSV("sem_combustivel", rows, [
+                  { label: "PO", get: (r) => r.poNumber },
+                  { label: "Viatura", get: (r) => data.vehicles.find((v) => v.id === r.vehicleId)?.plate || "" },
+                  { label: "Destino", get: (r) => r.destination },
+                  { label: "Dias", get: (r) => r.days },
+                  { label: "Estado", get: (r) => (r.done ? "reposta" : "pendente") },
+                ])
+              }
+            >
+              <Download size={12} /> Exportar CSV
+            </Btn>
+          )}
+        </div>
         {rows.length === 0 ? (
           <Empty text="Nenhuma viatura circulou sem combustível." />
         ) : (
@@ -1484,7 +1828,26 @@ function ReportReposicao({ data }) {
         <StatCard label="Ainda faltam" value={faltam} icon={CircleAlert} tone="warning" />
       </div>
       <Card className="p-4 overflow-x-auto scrollbar-thin">
-        <div className="font-semibold text-sm mb-3">Histórico de reposições</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold text-sm">Histórico de reposições</div>
+          {reposicoes.length > 0 && (
+            <Btn
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                exportToCSV("reposicoes_combustivel", reposicoes, [
+                  { label: "Data", get: (r) => fmtDate(r.date) },
+                  { label: "Viatura", get: (r) => data.vehicles.find((v) => v.id === r.vehicleId)?.plate || "" },
+                  { label: "Bomba", get: (r) => r.pump },
+                  { label: "Litros", get: (r) => r.liters },
+                  { label: "Valor (MT)", get: (r) => r.value },
+                ])
+              }
+            >
+              <Download size={12} /> Exportar CSV
+            </Btn>
+          )}
+        </div>
         {reposicoes.length === 0 ? (
           <Empty text="Nenhuma reposição lançada." />
         ) : (
@@ -1529,6 +1892,27 @@ function ReportAbastecidas({ data }) {
         <StatCard label="Valor total" value={`${totalValue.toLocaleString("pt-PT")} MT`} icon={BarChart3} />
       </div>
       <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold text-sm">Registos de abastecimento</div>
+          {rows.length > 0 && (
+            <Btn
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                exportToCSV("viaturas_abastecidas", rows, [
+                  { label: "Data", get: (r) => fmtDate(r.date) },
+                  { label: "Viatura", get: (r) => data.vehicles.find((v) => v.id === r.vehicleId)?.plate || "" },
+                  { label: "Bomba", get: (r) => r.pump },
+                  { label: "Litros", get: (r) => r.liters },
+                  { label: "Valor (MT)", get: (r) => r.value },
+                  { label: "Tipo", get: (r) => (r.type === "reposicao" ? "reposição" : "normal") },
+                ])
+              }
+            >
+              <Download size={12} /> Exportar CSV
+            </Btn>
+          )}
+        </div>
         {rows.length === 0 ? (
           <Empty text="Nenhum registo encontrado." />
         ) : (
@@ -1549,6 +1933,187 @@ function ReportAbastecidas({ data }) {
                   <td className="px-3 py-2">{r.liters} L</td>
                   <td className="px-3 py-2">{Number(r.value || 0).toLocaleString("pt-PT")} MT</td>
                   <td className="px-3 py-2"><Badge tone={r.type === "reposicao" ? "accent" : "default"}>{r.type === "reposicao" ? "reposição" : "normal"}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ReportCustos({ data }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const inRange = (d) => (!from || d >= from) && (!to || d <= to);
+
+  const periodInvoices = data.invoices.filter((i) => inRange(i.date));
+  const periodFuel = data.fuel.filter((f) => inRange(f.date));
+  const totalInvoices = periodInvoices.reduce((s, i) => s + (Number(i.value) || 0), 0);
+  const totalFuel = periodFuel.reduce((s, f) => s + (Number(f.value) || 0), 0);
+  const grandTotal = totalInvoices + totalFuel;
+
+  const poNumber = (id) => data.pos.find((p) => p.id === id)?.number || "—";
+  const vehiclePlate = (id) => data.vehicles.find((v) => v.id === id)?.plate || "—";
+
+  const byPO = useMemo(() => {
+    const m = {};
+    periodInvoices.forEach((i) => {
+      if (!i.poId) return;
+      const key = poNumber(i.poId);
+      m[key] = (m[key] || 0) + (Number(i.value) || 0);
+    });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [periodInvoices, data.pos]);
+
+  const byVehicle = useMemo(() => {
+    const m = {};
+    periodInvoices.forEach((i) => {
+      if (!i.vehicleId) return;
+      const key = vehiclePlate(i.vehicleId);
+      m[key] = (m[key] || 0) + (Number(i.value) || 0);
+    });
+    periodFuel.forEach((f) => {
+      const key = vehiclePlate(f.vehicleId);
+      m[key] = (m[key] || 0) + (Number(f.value) || 0);
+    });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [periodInvoices, periodFuel, data.vehicles]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="p-4">
+        <div className="text-xs font-semibold mb-2" style={{ color: T.inkSoft }}>PERÍODO</div>
+        <div className="flex gap-3 flex-wrap items-end">
+          <Field label="De"><input type="date" className={inputCls} style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+          <Field label="Até"><input type="date" className={inputCls} style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+          {(from || to) && <Btn size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>Limpar período</Btn>}
+        </div>
+      </Card>
+
+      <div className="grid sm:grid-cols-3 gap-4">
+        <StatCard label="Custo com faturas" value={`${totalInvoices.toLocaleString("pt-PT")} MT`} icon={Receipt} />
+        <StatCard label="Custo com combustível" value={`${totalFuel.toLocaleString("pt-PT")} MT`} icon={Fuel} tone="accent" />
+        <StatCard label="Custo total do período" value={`${grandTotal.toLocaleString("pt-PT")} MT`} icon={BarChart3} tone="warning" />
+      </div>
+
+      <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold text-sm">Custo por PO</div>
+          {byPO.length > 0 && (
+            <Btn size="sm" variant="ghost" onClick={() => exportToCSV("custo_por_po", byPO, [
+              { label: "PO", get: (r) => r[0] },
+              { label: "Custo (MT)", get: (r) => r[1] },
+            ])}>
+              <Download size={12} /> Exportar CSV
+            </Btn>
+          )}
+        </div>
+        {byPO.length === 0 ? (
+          <Empty text="Nenhuma fatura ligada a uma PO neste período." />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {byPO.map(([name, val]) => (
+              <div key={name} className="flex items-center justify-between text-sm py-1.5" style={{ borderBottom: `1px solid ${T.line}` }}>
+                <span className="mono">PO {name}</span>
+                <span style={{ color: T.inkSoft }}>{val.toLocaleString("pt-PT")} MT</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold text-sm">Custo por viatura (faturas + combustível)</div>
+          {byVehicle.length > 0 && (
+            <Btn size="sm" variant="ghost" onClick={() => exportToCSV("custo_por_viatura", byVehicle, [
+              { label: "Viatura", get: (r) => r[0] },
+              { label: "Custo (MT)", get: (r) => r[1] },
+            ])}>
+              <Download size={12} /> Exportar CSV
+            </Btn>
+          )}
+        </div>
+        {byVehicle.length === 0 ? (
+          <Empty text="Sem custos ligados a viaturas neste período." />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {byVehicle.map(([name, val]) => (
+              <div key={name} className="flex items-center justify-between text-sm py-1.5" style={{ borderBottom: `1px solid ${T.line}` }}>
+                <span className="mono">{name}</span>
+                <span style={{ color: T.inkSoft }}>{val.toLocaleString("pt-PT")} MT</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ReportAvaliacao({ data }) {
+  const order = { bloqueado: 0, atencao: 1, bom: 2 };
+  const companies = [...data.companies].sort((a, b) => (order[a.rating || "bom"] - order[b.rating || "bom"]));
+  const drivers = [...data.drivers].sort((a, b) => (order[a.rating || "bom"] - order[b.rating || "bom"]));
+  const companyName = (id) => data.companies.find((c) => c.id === id)?.name || "—";
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid sm:grid-cols-2 gap-4">
+        <StatCard label="Empresas bloqueadas" value={data.companies.filter((c) => c.rating === "bloqueado").length} icon={Ban} tone="danger" />
+        <StatCard label="Motoristas bloqueados" value={data.drivers.filter((d) => d.rating === "bloqueado").length} icon={Ban} tone="danger" />
+      </div>
+
+      <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="font-semibold text-sm mb-3">Empresas</div>
+        {companies.length === 0 ? (
+          <Empty text="Nenhuma empresa registada." />
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: T.surfaceSoft }}>
+                {["Empresa", "Avaliação", "Ocorrências", "Última ocorrência"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 text-xs font-medium" style={{ color: T.inkSoft }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {companies.map((c) => (
+                <tr key={c.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td className="px-3 py-2 font-medium">{c.name}</td>
+                  <td className="px-3 py-2"><RatingBadge rating={c.rating} /></td>
+                  <td className="px-3 py-2">{(c.incidents || []).length}</td>
+                  <td className="px-3 py-2" style={{ color: T.inkSoft }}>{c.incidents?.[0] ? `${fmtDate(c.incidents[0].date)} — ${c.incidents[0].note}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <Card className="p-4 overflow-x-auto scrollbar-thin">
+        <div className="font-semibold text-sm mb-3">Motoristas</div>
+        {drivers.length === 0 ? (
+          <Empty text="Nenhum motorista registado." />
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: T.surfaceSoft }}>
+                {["Motorista", "Empresa", "Avaliação", "Ocorrências", "Última ocorrência"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 text-xs font-medium" style={{ color: T.inkSoft }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {drivers.map((d) => (
+                <tr key={d.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td className="px-3 py-2 font-medium">{d.name}</td>
+                  <td className="px-3 py-2">{companyName(d.companyId)}</td>
+                  <td className="px-3 py-2"><RatingBadge rating={d.rating} /></td>
+                  <td className="px-3 py-2">{(d.incidents || []).length}</td>
+                  <td className="px-3 py-2" style={{ color: T.inkSoft }}>{d.incidents?.[0] ? `${fmtDate(d.incidents[0].date)} — ${d.incidents[0].note}` : "—"}</td>
                 </tr>
               ))}
             </tbody>
