@@ -1088,6 +1088,7 @@ function POsView({ data, setters, can }) {
         {data.pos.map((p) => {
           const allocs = p.allocations || [];
           const totalDays = allocs.reduce((s, a) => s + (Number(a.days) || 0), 0);
+          const totalCost = allocs.reduce((s, a) => s + (Number(a.dailyRate) || 0) * (Number(a.days) || 0), 0);
           const isOpen = open === p.id;
           return (
             <Card key={p.id} className="overflow-hidden">
@@ -1096,7 +1097,7 @@ function POsView({ data, setters, can }) {
                   {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   <div>
                     <div className="font-semibold text-sm mono">PO {p.number}</div>
-                    <div className="text-xs" style={{ color: T.inkSoft }}>{fmtDate(p.date)} · {allocs.length} viatura(s) · {totalDays} dias-viatura</div>
+                    <div className="text-xs" style={{ color: T.inkSoft }}>{fmtDate(p.date)} · {allocs.length} viatura(s) · {totalDays} dias-viatura{totalCost > 0 ? ` · ${totalCost.toLocaleString("pt-PT")} MT` : ""}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -1112,10 +1113,14 @@ function POsView({ data, setters, can }) {
               {isOpen && (
                 <div className="px-4 pb-4">
                   <div className="dashline mb-4" />
-                  <div className="grid sm:grid-cols-3 gap-3 mb-4 text-sm">
-                    <div><span style={{ color: T.inkSoft }}>Valor: </span><b>{Number(p.value || 0).toLocaleString("pt-PT")} MT</b></div>
+                  <div className="grid sm:grid-cols-4 gap-3 mb-4 text-sm">
+                    <div><span style={{ color: T.inkSoft }}>Valor da PO: </span><b>{Number(p.value || 0).toLocaleString("pt-PT")} MT</b></div>
                     <div><span style={{ color: T.inkSoft }}>Dias contratados: </span><b>{p.days || "—"}</b></div>
                     <div><span style={{ color: T.inkSoft }}>Dias já usados: </span><b>{totalDays}</b></div>
+                    <div>
+                      <span style={{ color: T.inkSoft }}>Custo real dos aluguéis: </span>
+                      <b style={{ color: p.value && totalCost > Number(p.value) ? T.danger : T.ink }}>{totalCost.toLocaleString("pt-PT")} MT</b>
+                    </div>
                   </div>
                   <AllocationsBlock po={p} data={data} setters={setters} can={can} onUpdate={(updated) => save(updated)} />
                 </div>
@@ -1205,31 +1210,44 @@ function AllocationsBlock({ po, data, setters, can, onUpdate }) {
           <table className="w-full text-xs">
             <thead>
               <tr style={{ background: T.surfaceSoft }}>
-                {["Viatura", "Empresa", "Motorista", "Dias", "Destino", "Combustível", ""].map((h) => (
+                {["Viatura", "Empresa", "Motorista", "Dias", "Destino", "Combustível", "Custo/dia", "Custo total", ""].map((h) => (
                   <th key={h} className="text-left px-2.5 py-2 font-medium" style={{ color: T.inkSoft }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {(po.allocations || []).map((a) => (
-                <tr key={a.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                  <td className="px-2.5 py-2 mono">{vehiclePlate(a.vehicleId)}</td>
-                  <td className="px-2.5 py-2">{companyName(a.vehicleId)}</td>
-                  <td className="px-2.5 py-2">{driverName(a.driverId)}</td>
-                  <td className="px-2.5 py-2">{a.days}</td>
-                  <td className="px-2.5 py-2">{a.destination}</td>
-                  <td className="px-2.5 py-2"><Badge tone={a.fuelIncluded ? "success" : "warning"}>{a.fuelIncluded ? "com" : "sem"}</Badge></td>
-                  <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                    {can.edit && (
-                      <>
-                        <button onClick={() => setModal(a)} className="p-1" style={{ color: T.inkSoft }}><Pencil size={12} /></button>
-                        <button onClick={() => removeAlloc(a.id)} className="p-1" style={{ color: T.danger }}><Trash2 size={12} /></button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {(po.allocations || []).map((a) => {
+                const cost = (Number(a.dailyRate) || 0) * (Number(a.days) || 0);
+                return (
+                  <tr key={a.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                    <td className="px-2.5 py-2 mono">{vehiclePlate(a.vehicleId)}</td>
+                    <td className="px-2.5 py-2">{companyName(a.vehicleId)}</td>
+                    <td className="px-2.5 py-2">{driverName(a.driverId)}</td>
+                    <td className="px-2.5 py-2">{a.days}</td>
+                    <td className="px-2.5 py-2">{a.destination}</td>
+                    <td className="px-2.5 py-2"><Badge tone={a.fuelIncluded ? "success" : "warning"}>{a.fuelIncluded ? "com" : "sem"}</Badge></td>
+                    <td className="px-2.5 py-2">{a.dailyRate ? `${Number(a.dailyRate).toLocaleString("pt-PT")} MT` : "—"}</td>
+                    <td className="px-2.5 py-2 font-medium">{cost > 0 ? `${cost.toLocaleString("pt-PT")} MT` : "—"}</td>
+                    <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                      {can.edit && (
+                        <>
+                          <button onClick={() => setModal(a)} className="p-1" style={{ color: T.inkSoft }}><Pencil size={12} /></button>
+                          <button onClick={() => removeAlloc(a.id)} className="p-1" style={{ color: T.danger }}><Trash2 size={12} /></button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
+            <tfoot>
+              <tr style={{ borderTop: `2px solid ${T.line}` }}>
+                <td colSpan={7} className="px-2.5 py-2 text-right font-semibold">Custo total da PO (aluguéis)</td>
+                <td className="px-2.5 py-2 font-semibold" colSpan={2}>
+                  {(po.allocations || []).reduce((s, a) => s + (Number(a.dailyRate) || 0) * (Number(a.days) || 0), 0).toLocaleString("pt-PT")} MT
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -1248,6 +1266,7 @@ function AllocationModal({ item, vehicles, drivers, companies, onSave, onClose }
     days: item.days || "",
     destination: item.destination || "",
     fuelIncluded: item.fuelIncluded ?? true,
+    dailyRate: item.dailyRate || "",
     startDate: item.startDate || todayISO(),
   });
   const companyOf = (v) => companies.find((c) => c.id === v.companyId);
@@ -1255,6 +1274,7 @@ function AllocationModal({ item, vehicles, drivers, companies, onSave, onClose }
   const blockedVehiclesCount = vehicles.length - availableVehicles.length;
   const availableDrivers = drivers.filter((d) => d.rating !== "bloqueado");
   const blockedDriversCount = drivers.length - availableDrivers.length;
+  const totalCost = (Number(f.dailyRate) || 0) * (Number(f.days) || 0);
   return (
     <Modal title={item.id ? "Editar alocação" : "Alocar viatura"} onClose={onClose}>
       <div className="flex flex-col gap-3">
@@ -1301,6 +1321,15 @@ function AllocationModal({ item, vehicles, drivers, companies, onSave, onClose }
             </button>
           </div>
         </Field>
+        <Field label={`Custo diário do aluguel (MT) — ${f.fuelIncluded ? "com" : "sem"} combustível`}>
+          <input type="number" className={inputCls} style={inputStyle} value={f.dailyRate} onChange={(e) => setF({ ...f, dailyRate: e.target.value })} placeholder="ex: 3500" />
+        </Field>
+        {totalCost > 0 && (
+          <div className="rounded-lg px-3 py-2 text-sm flex items-center justify-between" style={{ background: T.accentSoft, color: T.accent }}>
+            <span>Custo total deste aluguel ({f.days || 0} dias)</span>
+            <span className="font-semibold">{totalCost.toLocaleString("pt-PT")} MT</span>
+          </div>
+        )}
       </div>
       <div className="flex justify-end gap-2 mt-5">
         <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
@@ -1649,9 +1678,10 @@ function ReportPO({ data }) {
     const m = {};
     (po.allocations || []).forEach((a) => {
       const name = companyName(a.vehicleId);
-      m[name] = m[name] || { count: 0, days: 0 };
+      m[name] = m[name] || { count: 0, days: 0, cost: 0 };
       m[name].count += 1;
       m[name].days += Number(a.days) || 0;
+      m[name].cost += (Number(a.dailyRate) || 0) * (Number(a.days) || 0);
     });
     return m;
   }, [po]);
@@ -1659,6 +1689,7 @@ function ReportPO({ data }) {
   if (data.pos.length === 0) return <Empty text="Nenhuma PO registada ainda." />;
 
   const totalDays = (po?.allocations || []).reduce((s, a) => s + (Number(a.days) || 0), 0);
+  const totalRealCost = (po?.allocations || []).reduce((s, a) => s + (Number(a.dailyRate) || 0) * (Number(a.days) || 0), 0);
 
   return (
     <div>
@@ -1673,7 +1704,7 @@ function ReportPO({ data }) {
             <StatCard label="Viaturas na PO" value={(po.allocations || []).length} icon={Car} />
             <StatCard label="Dias-viatura totais" value={totalDays} icon={FileText} tone="accent" />
             <StatCard label="Empresas envolvidas" value={Object.keys(byCompany).length} icon={Building2} />
-            <StatCard label="Valor da PO" value={`${Number(po.value || 0).toLocaleString("pt-PT")} MT`} icon={BarChart3} />
+            <StatCard label="Custo real dos aluguéis" value={`${totalRealCost.toLocaleString("pt-PT")} MT`} icon={BarChart3} tone="warning" />
           </div>
 
           <Card className="p-4">
@@ -1685,7 +1716,7 @@ function ReportPO({ data }) {
                 {Object.entries(byCompany).map(([name, v]) => (
                   <div key={name} className="flex items-center justify-between text-sm py-1.5" style={{ borderBottom: `1px solid ${T.line}` }}>
                     <span>{name}</span>
-                    <span style={{ color: T.inkSoft }}>{v.count} viatura(s) · {v.days} dias</span>
+                    <span style={{ color: T.inkSoft }}>{v.count} viatura(s) · {v.days} dias{v.cost > 0 ? ` · ${v.cost.toLocaleString("pt-PT")} MT` : ""}</span>
                   </div>
                 ))}
               </div>
@@ -1705,6 +1736,8 @@ function ReportPO({ data }) {
                     { label: "Dias", get: (a) => a.days },
                     { label: "Destino", get: (a) => a.destination },
                     { label: "Combustível", get: (a) => (a.fuelIncluded ? "com" : "sem") },
+                    { label: "Custo/dia (MT)", get: (a) => a.dailyRate || "" },
+                    { label: "Custo total (MT)", get: (a) => (Number(a.dailyRate) || 0) * (Number(a.days) || 0) },
                   ])
                 }
               >
@@ -1714,21 +1747,26 @@ function ReportPO({ data }) {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: T.surfaceSoft }}>
-                  {["Viatura", "Empresa", "Dias", "Destino", "Combustível"].map((h) => (
+                  {["Viatura", "Empresa", "Dias", "Destino", "Combustível", "Custo/dia", "Custo total"].map((h) => (
                     <th key={h} className="text-left px-3 py-2 text-xs font-medium" style={{ color: T.inkSoft }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {(po.allocations || []).map((a) => (
-                  <tr key={a.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                    <td className="px-3 py-2 mono">{data.vehicles.find((v) => v.id === a.vehicleId)?.plate || "—"}</td>
-                    <td className="px-3 py-2">{companyName(a.vehicleId)}</td>
-                    <td className="px-3 py-2">{a.days}</td>
-                    <td className="px-3 py-2">{a.destination}</td>
-                    <td className="px-3 py-2"><Badge tone={a.fuelIncluded ? "success" : "warning"}>{a.fuelIncluded ? "com" : "sem"}</Badge></td>
-                  </tr>
-                ))}
+                {(po.allocations || []).map((a) => {
+                  const cost = (Number(a.dailyRate) || 0) * (Number(a.days) || 0);
+                  return (
+                    <tr key={a.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td className="px-3 py-2 mono">{data.vehicles.find((v) => v.id === a.vehicleId)?.plate || "—"}</td>
+                      <td className="px-3 py-2">{companyName(a.vehicleId)}</td>
+                      <td className="px-3 py-2">{a.days}</td>
+                      <td className="px-3 py-2">{a.destination}</td>
+                      <td className="px-3 py-2"><Badge tone={a.fuelIncluded ? "success" : "warning"}>{a.fuelIncluded ? "com" : "sem"}</Badge></td>
+                      <td className="px-3 py-2">{a.dailyRate ? `${Number(a.dailyRate).toLocaleString("pt-PT")} MT` : "—"}</td>
+                      <td className="px-3 py-2 font-medium">{cost > 0 ? `${cost.toLocaleString("pt-PT")} MT` : "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
@@ -1950,9 +1988,19 @@ function ReportCustos({ data }) {
 
   const periodInvoices = data.invoices.filter((i) => inRange(i.date));
   const periodFuel = data.fuel.filter((f) => inRange(f.date));
+
+  // Todas as alocações (aluguéis) de todas as PO's, com o número da PO anexado
+  const allAllocations = useMemo(() => {
+    const list = [];
+    data.pos.forEach((p) => (p.allocations || []).forEach((a) => list.push({ ...a, poNumber: p.number })));
+    return list;
+  }, [data.pos]);
+  const periodAllocations = allAllocations.filter((a) => inRange(a.startDate || ""));
+
   const totalInvoices = periodInvoices.reduce((s, i) => s + (Number(i.value) || 0), 0);
   const totalFuel = periodFuel.reduce((s, f) => s + (Number(f.value) || 0), 0);
-  const grandTotal = totalInvoices + totalFuel;
+  const totalAllocations = periodAllocations.reduce((s, a) => s + (Number(a.dailyRate) || 0) * (Number(a.days) || 0), 0);
+  const grandTotal = totalInvoices + totalFuel + totalAllocations;
 
   const poNumber = (id) => data.pos.find((p) => p.id === id)?.number || "—";
   const vehiclePlate = (id) => data.vehicles.find((v) => v.id === id)?.plate || "—";
@@ -1964,8 +2012,12 @@ function ReportCustos({ data }) {
       const key = poNumber(i.poId);
       m[key] = (m[key] || 0) + (Number(i.value) || 0);
     });
+    periodAllocations.forEach((a) => {
+      const key = a.poNumber;
+      m[key] = (m[key] || 0) + (Number(a.dailyRate) || 0) * (Number(a.days) || 0);
+    });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
-  }, [periodInvoices, data.pos]);
+  }, [periodInvoices, periodAllocations, data.pos]);
 
   const byVehicle = useMemo(() => {
     const m = {};
@@ -1978,8 +2030,12 @@ function ReportCustos({ data }) {
       const key = vehiclePlate(f.vehicleId);
       m[key] = (m[key] || 0) + (Number(f.value) || 0);
     });
+    periodAllocations.forEach((a) => {
+      const key = vehiclePlate(a.vehicleId);
+      m[key] = (m[key] || 0) + (Number(a.dailyRate) || 0) * (Number(a.days) || 0);
+    });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
-  }, [periodInvoices, periodFuel, data.vehicles]);
+  }, [periodInvoices, periodFuel, periodAllocations, data.vehicles]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -1992,7 +2048,8 @@ function ReportCustos({ data }) {
         </div>
       </Card>
 
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-4 gap-4">
+        <StatCard label="Custo com aluguéis" value={`${totalAllocations.toLocaleString("pt-PT")} MT`} icon={Car} />
         <StatCard label="Custo com faturas" value={`${totalInvoices.toLocaleString("pt-PT")} MT`} icon={Receipt} />
         <StatCard label="Custo com combustível" value={`${totalFuel.toLocaleString("pt-PT")} MT`} icon={Fuel} tone="accent" />
         <StatCard label="Custo total do período" value={`${grandTotal.toLocaleString("pt-PT")} MT`} icon={BarChart3} tone="warning" />
@@ -2026,7 +2083,7 @@ function ReportCustos({ data }) {
 
       <Card className="p-4 overflow-x-auto scrollbar-thin">
         <div className="flex items-center justify-between mb-3">
-          <div className="font-semibold text-sm">Custo por viatura (faturas + combustível)</div>
+          <div className="font-semibold text-sm">Custo por viatura (aluguéis + faturas + combustível)</div>
           {byVehicle.length > 0 && (
             <Btn size="sm" variant="ghost" onClick={() => exportToCSV("custo_por_viatura", byVehicle, [
               { label: "Viatura", get: (r) => r[0] },
